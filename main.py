@@ -6,11 +6,11 @@ import cairosvg
 import os
 
 
-# Function to fetch user profile data from HackerRank
+# Fetch user profile data from HackerRank
 def fetch_hackerrank_data(username):
-    url = f"https://www.hackerrank.com/profile/{username}"
+    url = f"https://www.hackerrank.com/{username}"
     headers = {
-        "User-Agent": "hackerRankCard"  # Replace with your app's name
+        "User-Agent": os.getenv("HACKERRANK_CARD_USER_AGENT", "HackerRankCardApp")
     }
 
     response = requests.get(url, headers=headers)
@@ -19,30 +19,40 @@ def fetch_hackerrank_data(username):
 
     soup = BeautifulSoup(response.text, "html.parser")
 
-    # Extracting profile info from the title tag
+    # Extract profilename from the title
     title = soup.find("title").text.strip()
-    try:
-        profile_name = title.split(" - ")[0]  # Extract the name part before the '-'
-    except IndexError:
-        profile_name = "N/A"
+    profile_name = title.split(" - ")[0] if " - " in title else "N/A"
 
-    # Find all badge elements
+    # Extract badges
     badges = soup.find_all('div', class_='hacker-badge')
-
-    # Iterate through the badges to extract relevant details
     badge_data = []
+
     for badge in badges:
-        badge_title = badge.find('text', class_='badge-title').text if badge.find('text', class_='badge-title') else 'N/A'
+        # Extract the badge title, ensuring it defaults to 'N/A' if not found
+        badge_title = badge.find('text', class_='badge-title').text.strip() if badge.find('text',
+                                                                                          class_='badge-title') else 'N/A'
 
-        # Check for other possible attributes for image URL
+        # Extract the badge icon URL (SVG or image link)
         badge_icon = badge.find('image', class_='badge-icon')
-        if badge_icon:
-            badge_icon_url = badge_icon['xlink:href'] if 'xlink:href' in badge_icon.attrs else 'N/A'
-        else:
-            badge_icon_url = 'N/A'
+        badge_icon_url = badge_icon['xlink:href'] if badge_icon and 'xlink:href' in badge_icon.attrs else 'N/A'
 
-        badge_data.append({'title': badge_title, 'icon_url': badge_icon_url})
+        # Fetch data from specific badge IDs (e.g., badge-silver-gradient, badge-star)
+        silver_gradient_badge = soup.find(id="badge-silver-gradient")
+        star_badge = soup.find(class_="badge-star")
 
+        # Optionally, add more fields like stars, colors, or additional text based on the available HTML structure
+        silver_gradient_data = silver_gradient_badge.text.strip() if silver_gradient_badge else 'N/A'
+        star_badge_data = star_badge.text.strip() if star_badge else 'N/A'
+
+        # Collect the badge data, including the additional info
+        badge_data.append({
+            'title': badge_title,
+            'icon_url': badge_icon_url,
+            'silver_gradient': silver_gradient_data,
+            'star_badge': star_badge_data
+        })
+
+    # Return the collected badge data
     return {
         "username": username,
         "full_name": profile_name,
@@ -50,122 +60,116 @@ def fetch_hackerrank_data(username):
     }
 
 
-# Function to handle SVG to PNG conversion
+# Convert SVG to PNG
 def convert_svg_to_png(svg_url):
     try:
-        # Fetch the SVG content
         svg_response = requests.get(svg_url)
         if svg_response.status_code == 200:
-            # Convert the SVG content to PNG using cairosvg
             png_image = cairosvg.svg2png(bytestring=svg_response.content)
             return Image.open(BytesIO(png_image))
-        else:
-            raise Exception("SVG download failed")
     except Exception as e:
         print(f"Error converting SVG to PNG: {e}")
-        return None
+    return None
 
 
-# Function to load the HackerRank logo from local storage
+# Load HackerRank logo
 def load_local_hackerrank_logo(logo_path):
     if os.path.exists(logo_path):
         return Image.open(logo_path)
-    else:
-        print(f"Logo file not found at {logo_path}")
-        return None
+    print(f"Logo file not found at {logo_path}")
+    return None
 
 
 def create_github_card(data, logo_path, output_file):
-    # Load the HackerRank logo from local storage
     logo = load_local_hackerrank_logo(logo_path)
     if not logo:
         return
 
-    # Set the width and height for the image
+    # Print badge information
+    print("Badges Information:")
+    for badge in data['badges']:
+        print(f"Title: {badge['title']}, Icon URL: {badge['icon_url']}")
+
+    # Card dimensions
     card_width = 600
     logo_height = 80
     badge_width = 50
     space_between_badges = 10
-    y_offset_start = logo_height + 20  # Padding below the logo
+    y_offset_start = logo_height + 20
     y_offset = y_offset_start
 
-    # Calculate the number of rows needed for badges
+    # Calculate number of badges in a row and total rows
     badges_in_row = (card_width - 40) // (badge_width + space_between_badges)
-    badge_rows = (len(data['badges']) // badges_in_row) + (1 if len(data['badges']) % badges_in_row != 0 else 0)
+    badge_rows = (len(data['badges']) + badges_in_row - 1) // badges_in_row
 
-    # Increase the overall height to accommodate additional spacing or content
-    card_height = y_offset_start + (badge_rows * (badge_width + space_between_badges)) + 140
+    # Increase height for badges and text
+    card_height = y_offset_start + badge_rows * (badge_width + space_between_badges + 20) + 180
 
-    # Adding space for name and other text with more padding
-    card_height += 80  # Increase the height for user name, badge title, and other text
-
-    # Create a blank image with a white background
+    # Create card image
     img = Image.new("RGB", (card_width, card_height), color="white")
     draw = ImageDraw.Draw(img)
 
-    # Draw the HackerRank logo
-    logo_resized = logo.resize((200, logo_height))  # Resize the logo
-    img.paste(logo_resized, (20, 20))  # Position logo at the top
+    # Add the HackerRank logo
+    logo_resized = logo.resize((200, logo_height))
+    img.paste(logo_resized, (20, 20))
 
     # Load fonts
     try:
         font_large = ImageFont.truetype("DejaVuSans-Bold.ttf", size=32)
-        font_small = ImageFont.truetype("DejaVuSans-Bold.ttf", size=24)
+        font_small = ImageFont.truetype("DejaVuSans-Bold.ttf", size=16)
     except IOError:
-        print("Error loading font. Make sure the font file exists.")
-        return
+        font_large = ImageFont.load_default()
+        font_small = ImageFont.load_default()
 
-    # Add text to the image
+    # Add username and full name
     draw.text((20, y_offset), f"HackerRank User: {data['username']}", fill="black", font=font_large)
-    y_offset += 80  # Increase offset after user info
+    y_offset += 80
     draw.text((20, y_offset), f"Name: {data['full_name']}", fill="black", font=font_small)
-    y_offset += 60  # Increase offset after name text
+    y_offset += 60
 
-    draw.text((20, y_offset), f"Badges:", fill="black", font=font_small)
-    y_offset += 60  # Increase offset after badges title
+    draw.text((20, y_offset), "Badges:", fill="black", font=font_small)
+    y_offset += 40
 
-    # Horizontal layout: Initialize x_offset and y_offset for badges
+    # Add badges and titles
     x_offset = 20
-
     for idx, badge in enumerate(data['badges']):
-        # If badge icon URL is valid
         if badge['icon_url'] != 'N/A':
             try:
-                # Check if the icon is an SVG
+                # Download and process the badge icon
                 if badge['icon_url'].endswith('.svg'):
                     icon_image = convert_svg_to_png(badge['icon_url'])
                 else:
                     icon_response = requests.get(badge['icon_url'])
-                    if icon_response.status_code == 200:
-                        icon_image = Image.open(BytesIO(icon_response.content))
+                    icon_image = Image.open(
+                        BytesIO(icon_response.content)) if icon_response.status_code == 200 else None
 
-                # If icon image is successfully fetched and processed
                 if icon_image:
-                    # Resize the icon to fit within the card
+                    # Resize the icon
                     icon_image = icon_image.resize((badge_width, badge_width))
+                    img.paste(icon_image, (x_offset, y_offset))
 
-                    # Paste the badge icon directly onto the card
-                    img.paste(icon_image, (x_offset, y_offset))  # Position the icon on the card
+                    # Add the badge title below the icon
+                    title_bbox = draw.textbbox((0, 0), badge['title'], font=font_small)
+                    title_width = title_bbox[2] - title_bbox[0]  # Calculate text width
+                    text_x = x_offset + badge_width // 2 - title_width // 2
+                    draw.text((text_x, y_offset + badge_width + 5), badge['title'], fill="black", font=font_small)
 
-                    # Update x_offset for the next badge
+                    # Adjust position for next badge
                     x_offset += badge_width + space_between_badges
-
-                    # If we've reached the end of the row, move to the next row
                     if (idx + 1) % badges_in_row == 0:
-                        x_offset = 20  # Reset x_offset to the start of the next row
-                        y_offset += badge_width + space_between_badges  # Move to the next line
+                        x_offset = 20
+                        y_offset += badge_width + space_between_badges + 20
             except Exception as e:
                 print(f"Failed to download or display badge icon for {badge['title']}: {e}")
 
-    # Save the final image
+    # Save the card
     img.save(output_file)
     print(f"Card saved as {output_file}")
 
 
-
 # Main function
 if __name__ == "__main__":
-    username = "samba9274"  # Replace with the actual HackerRank username
+    username = "samba9274"  # Replace with actual HackerRank username
     try:
         user_data = fetch_hackerrank_data(username)
         create_github_card(user_data, "hackerrank.jpg", f"{username}_hackerrank_card.png")
